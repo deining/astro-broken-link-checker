@@ -1,6 +1,6 @@
 {
   "name": "astro-broken-links-checker",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "An Astro integration to check for broken links in your website during development and build time.",
   "main": "index.js",
   "type": "module",
