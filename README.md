@@ -13,10 +13,7 @@ An Astro integration that checks for broken links in your website during static 
 - **Timeouts and retries**: To avoid false positives, links that fail to load with ECONNRESET are retried 3 times with exponential backoff. Timeouts are set to 3 second max including retries.
 - **Link text preservation**: The contents of "href" are only normalized to a domain-relative path (like /foo/bar/) if they are "../relative" or "./relative" or "relative" etc. It is otherwise preserved for reporting purposes.
 - **Cross-platform compatibility**: The physical paths of the html files are normalized to domain relative paths.
-- **Disk caching of remote links**: To speed up subsequent builds, a tab-delimited text file is optionally written to disk containing the contents of all remote links checked and the status code returned by the server, in the form URL<tab>ok/failed<tab>status code<tab>ISO-8601-formatted timestamp.
-
-
-
+- **Disk caching of verified external links**: To speed up subsequent builds, verified external links are cached to `.link-checker/verified-external-links.tsv`. This TSV file contains URL, status (ok), status code, and timestamp. Commit this file to git to avoid re-checking links on CI.
 
 ## Installation
 
@@ -44,10 +41,20 @@ export default defineConfig({
   // ... other configurations ...
   integrations: [
     astroBrokenLinksChecker({
-      logFilePath: 'broken-links.log', // Optional: specify the log file path
-      checkExternalLinks: false, // Optional: check external links (currently, caching to disk is not supported, and it is slow)
-      throwError: true // Optional: throw an error to fail the build if broken links are found. Defaults to false.
+      checkExternalLinks: true,       // Optional: check external links (default: false)
+      cacheExternalLinks: true,       // Optional: cache verified external links to disk (default: true)
+      throwError: true,               // Optional: fail the build if broken links are found (default: false)
+      linkCheckerDir: '.link-checker' // Optional: directory for cache and log files (default: '.link-checker')
     }),
   ],
 });
 ```
+
+## Output Directory
+
+The integration creates a `.link-checker` directory containing:
+
+- **`verified-external-links.tsv`** - Cache of verified external links (TSV format: URL, status, statusCode, timestamp). **Commit this file to git** to avoid re-checking links on CI builds.
+- **`broken-links.log`** - Log of broken links found during build (gitignored).
+
+The directory only appears in git when `verified-external-links.tsv` exists.

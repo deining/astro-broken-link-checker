@@ -4,6 +4,58 @@ import {URL} from 'url';
 import path from 'path';
 import pLimit from 'p-limit';
 
+/**
+ * Load verified external links from a TSV cache file.
+ * Format: URL\tok\tstatus_code\ttimestamp
+ * @param {string} cachePath - Path to the cache file
+ * @returns {Map<string, {status: string, statusCode: number, timestamp: string}>}
+ */
+export function loadExternalLinkCache(cachePath) {
+  const cache = new Map();
+  if (!fs.existsSync(cachePath)) {
+    return cache;
+  }
+
+  const content = fs.readFileSync(cachePath, 'utf8');
+  const lines = content.split('\n').filter(line => line.trim());
+
+  for (const line of lines) {
+    const [url, status, statusCode, timestamp] = line.split('\t');
+    if (url && status === 'ok') {
+      cache.set(url, {
+        status,
+        statusCode: parseInt(statusCode, 10),
+        timestamp
+      });
+    }
+  }
+
+  return cache;
+}
+
+/**
+ * Save verified external links to a TSV cache file.
+ * Only saves links that were successfully verified (ok status).
+ * @param {string} cachePath - Path to the cache file
+ * @param {Map<string, {status: string, statusCode: number, timestamp: string}>} cache
+ */
+export function saveExternalLinkCache(cachePath, cache) {
+  const lines = [];
+  for (const [url, data] of cache.entries()) {
+    if (data.status === 'ok') {
+      lines.push(`${url}\t${data.status}\t${data.statusCode}\t${data.timestamp}`);
+    }
+  }
+
+  // Ensure directory exists
+  const dir = path.dirname(cachePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, {recursive: true});
+  }
+
+  fs.writeFileSync(cachePath, lines.join('\n'), 'utf8');
+}
+
 export async function checkLinksInHtml(
   htmlContent,
   brokenLinksMap,
@@ -15,6 +67,7 @@ export async function checkLinksInHtml(
   logger,
   checkExternalLinks = true,
   trailingSlash = 'ignore',
+  externalLinkCache = null,
 ) {
   const root = parse(htmlContent);
   const linkElements = root.querySelectorAll('a[href]');
@@ -100,24 +153,41 @@ export async function checkLinksInHtml(
       } else {
         // External link, check via HTTP request. Retry 3 times if ECONNRESET
         if (checkExternalLinks) {
-          let retries = 0;
-          while (retries < 3) {
-            try {
-              const response = await fetch(fetchLink, {method: 'GET'});
-              isBroken = !response.ok;
-              if (isBroken) {
-                logger.error(`${response.status} Error fetching ${fetchLink}`);
+          // Check the external link cache first
+          if (externalLinkCache && externalLinkCache.has(fetchLink)) {
+            // Link was previously verified as working, skip HTTP request
+            isBroken = false;
+          } else {
+            let retries = 0;
+            let statusCode = 0;
+            while (retries < 3) {
+              try {
+                const response = await fetch(fetchLink, {method: 'GET'});
+                statusCode = response.status;
+                isBroken = !response.ok;
+                if (isBroken) {
+                  logger.error(`${response.status} Error fetching ${fetchLink}`);
+                }
+                break;
+              } catch (error) {
+                isBroken = true;
+                statusCode = error.errno === 'ENOTFOUND' ? 404 : 0;
+                logger.error(`${statusCode || error.errno} error fetching ${fetchLink}`);
+                if (error.errno === 'ECONNRESET') {
+                  retries++;
+                  continue;
+                }
+                break;
               }
-              break;
-            } catch (error) {
-              isBroken = true;
-              let statusCodeNumber = error.errno === 'ENOTFOUND' ? 404 : (error.errno);
-              logger.error(`${statusCodeNumber} error fetching ${fetchLink}`);
-              if (error.errno === 'ECONNRESET') {
-                retries++;
-                continue;
-              }
-              break;
+            }
+
+            // Cache successful external link checks
+            if (!isBroken && externalLinkCache) {
+              externalLinkCache.set(fetchLink, {
+                status: 'ok',
+                statusCode: statusCode,
+                timestamp: new Date().toISOString()
+              });
             }
           }
         }
