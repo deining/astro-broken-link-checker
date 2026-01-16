@@ -55,6 +55,6 @@ export default defineConfig({
 The integration creates a `.link-checker` directory containing:
 
 - **`verified-external-links.tsv`** - Cache of verified external links (TSV format: URL, status, statusCode, timestamp). **Commit this file to git** to avoid re-checking links on CI builds.
-- **`broken-links.log`** - Log of broken links found during build. Auto-gitignored.
+- **`broken-links.log`** - Log of broken links found during build (gitignored).
 
-The directory is created automatically on first build when broken links are found or external link checking is enabled.
+The directory only appears in git when `verified-external-links.tsv` exists.
