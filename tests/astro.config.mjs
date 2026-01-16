@@ -7,6 +7,7 @@ export default defineConfig({
     '/redirected': '/about',
   },
   integrations: [astroBrokenLinksChecker({
-    logFilePath: 'broken-links.log',
+    checkExternalLinks: true,
+    cacheExternalLinks: true,
   })],
 });

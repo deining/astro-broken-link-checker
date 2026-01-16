@@ -1,13 +1,35 @@
 import {fileURLToPath} from 'url';
 import {join} from 'path';
 import fs from 'fs';
-import {checkLinksInHtml, normalizeHtmlFilePath} from './check-links.js';
+import {checkLinksInHtml, normalizeHtmlFilePath, loadExternalLinkCache, saveExternalLinkCache} from './check-links.js';
 import fastGlob from 'fast-glob';
 
+const LINK_CHECKER_DIR = '.link-checker';
+const VERIFIED_LINKS_FILE = 'verified-external-links.tsv';
+const BROKEN_LINKS_FILE = 'broken-links.log';
+
+/**
+ * Ensures the link checker directory exists and has a .gitignore file
+ * that ignores the broken-links.log file.
+ */
+function ensureLinkCheckerDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, {recursive: true});
+  }
+
+  const gitignorePath = join(dirPath, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, '# Ignore broken links log (not useful in git)\nbroken-links.log\n', 'utf8');
+  }
+}
+
 export default function astroBrokenLinksChecker(options = {}) {
-  const logFilePath = options.logFilePath || 'broken-links.log';
+  const linkCheckerDir = options.linkCheckerDir || LINK_CHECKER_DIR;
+  const logFilePath = join(linkCheckerDir, BROKEN_LINKS_FILE);
+  const verifiedLinksPath = join(linkCheckerDir, VERIFIED_LINKS_FILE);
   const brokenLinksMap = new Map(); // Map of brokenLink -> Set of documents
   const checkedLinks = new Map();
+  let externalLinkCache = null;
 
   return {
     name: 'astro-broken-links-checker',
@@ -27,6 +49,20 @@ export default function astroBrokenLinksChecker(options = {}) {
         const distPath = fileURLToPath(dir);
         const htmlFiles = await fastGlob('**/*.html', {cwd: distPath});
         logger.info(`Checking ${htmlFiles.length} html pages for broken links`);
+
+        // Ensure link checker directory exists with .gitignore
+        ensureLinkCheckerDir(linkCheckerDir);
+
+        // Load external link cache if checking external links and caching is enabled
+        const cacheExternalLinks = options.cacheExternalLinks !== false;
+        if (options.checkExternalLinks && cacheExternalLinks) {
+          externalLinkCache = loadExternalLinkCache(verifiedLinksPath);
+          const cachedCount = externalLinkCache.size;
+          if (cachedCount > 0) {
+            logger.info(`Loaded ${cachedCount} verified external links from cache`);
+          }
+        }
+
         // start time
         const startTime = Date.now();
         const checkHtmlPromises = htmlFiles.map(async (htmlFile) => {
@@ -44,11 +80,19 @@ export default function astroBrokenLinksChecker(options = {}) {
             logger,
             options.checkExternalLinks,
             options.trailingSlash,
+            externalLinkCache,
           );
         });
 
         await Promise.all(checkHtmlPromises);
-        logBrokenLinks(brokenLinksMap, logFilePath, logger);
+
+        // Save external link cache if checking external links and caching is enabled
+        if (options.checkExternalLinks && cacheExternalLinks && externalLinkCache) {
+          saveExternalLinkCache(verifiedLinksPath, externalLinkCache);
+          logger.info(`Saved ${externalLinkCache.size} verified external links to cache`);
+        }
+
+        logBrokenLinks(brokenLinksMap, logFilePath, logger, linkCheckerDir);
 
         // end time
         const endTime = Date.now();
@@ -63,7 +107,7 @@ export default function astroBrokenLinksChecker(options = {}) {
   };
 }
 
-function logBrokenLinks(brokenLinksMap, logFilePath, logger) {
+function logBrokenLinks(brokenLinksMap, logFilePath, logger, linkCheckerDir) {
   if (brokenLinksMap.size > 0) {
     let logData = '';
     for (const [brokenLink, documentsSet] of brokenLinksMap.entries()) {
@@ -75,6 +119,10 @@ function logBrokenLinks(brokenLinksMap, logFilePath, logger) {
     }
     logData = logData.trim();
     if (logFilePath) {
+      // Ensure directory exists with .gitignore
+      if (linkCheckerDir) {
+        ensureLinkCheckerDir(linkCheckerDir);
+      }
       fs.writeFileSync(logFilePath, logData, 'utf8');
       logger.info(`Broken links have been logged to ${logFilePath}`);
       logger.info(logData);
